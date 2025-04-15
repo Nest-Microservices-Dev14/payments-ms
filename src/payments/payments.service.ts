@@ -6,10 +6,10 @@ import { Request, Response } from 'express';
 
 @Injectable()
 export class PaymentsService {
-    private readonly stripe = new Stripe(envs.stripeSecret);
+    private readonly stripe = new Stripe(envs.stripeSecretKey);
 
     async createPaymentSession(paymentSessionDto: PaymentSessionDto){
-        const { currency, items } = paymentSessionDto;
+        const { currency, items, orderId } = paymentSessionDto;
 
         const lineItems = items.map( item => {
             return {
@@ -26,20 +26,23 @@ export class PaymentsService {
 
         return await this.stripe.checkout.sessions.create({
             payment_intent_data: {
-                metadata: {}
+                metadata: {
+                    orderId
+                }
             },
 
             line_items: lineItems,
             mode: 'payment',
-            success_url: 'http://localhost:3003/payments/success',
-            cancel_url: 'http://localhost:3003/payments/cancel',
+            success_url: envs.stripeSuccessUrl,
+            cancel_url: envs.stripeCancelUrl,
         });
     }
 
     async stripeWebhook( req: Request, res: Response){
+        console.log(req.headers);
         const sig = req.headers['stripe-signature'] as string;
         let event: Stripe.Event;
-        const endpointSecret = "whsec_86309b22d9d0fa43dc8a0ec7bf3b279f04e6cd241316c9a6c002b7d70e2307a7";
+        const endpointSecret = envs.stripeEndpointSecret;
 
         try {
             event = this.stripe.webhooks.constructEvent(
@@ -52,7 +55,21 @@ export class PaymentsService {
             res.status(400).send(`Webhook Error: ${error.message}`);
             return;
         }
-        console.log({ event })
+
+        switch( event.type ){
+            case 'charge.succeeded':
+                //TODO: llamar nuestro microservicio
+                const chargeSucceeded = event.data.object;
+                console.log(event.data.object);
+                console.log(chargeSucceeded.metadata);
+                console.log(chargeSucceeded.metadata.orderId);
+            break;
+
+            default:
+                console.log(`Event ${ event.type } not handled`)
+        }
+
         return res.status(200).json({ sig });
+
     }
 }
