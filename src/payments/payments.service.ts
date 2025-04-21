@@ -1,12 +1,20 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { envs } from 'src/config/envs';
 import Stripe from 'stripe';
 import { PaymentSessionDto } from './dto/payment-session.dto';
 import { Request, Response } from 'express';
+import { NATS_SERVERS } from 'src/config/service';
+import { ClientProxy } from '@nestjs/microservices';
 
 @Injectable()
 export class PaymentsService {
+
     private readonly stripe = new Stripe(envs.stripeSecretKey);
+    private readonly logger = new Logger('PaymentServices');
+
+    constructor(
+        @Inject(NATS_SERVERS) private readonly client: ClientProxy
+    ){ }
 
     async createPaymentSession(paymentSessionDto: PaymentSessionDto){
         const { currency, items, orderId } = paymentSessionDto;
@@ -23,8 +31,7 @@ export class PaymentsService {
                 quantity: item.quantity
             }
         });
-
-        return await this.stripe.checkout.sessions.create({
+        const session = await this.stripe.checkout.sessions.create({
             payment_intent_data: {
                 metadata: {
                     orderId
@@ -36,10 +43,15 @@ export class PaymentsService {
             success_url: envs.stripeSuccessUrl,
             cancel_url: envs.stripeCancelUrl,
         });
+
+        return {
+            successUrl: session.success_url,
+            cancelUrl: session.cancel_url,
+            url: session.url
+        }
     }
 
     async stripeWebhook( req: Request, res: Response){
-        console.log(req.headers);
         const sig = req.headers['stripe-signature'] as string;
         let event: Stripe.Event;
         const endpointSecret = envs.stripeEndpointSecret;
@@ -51,18 +63,19 @@ export class PaymentsService {
                 endpointSecret
             );
         } catch (error) {
-            console.log('error', error.message);
             res.status(400).send(`Webhook Error: ${error.message}`);
             return;
         }
 
         switch( event.type ){
             case 'charge.succeeded':
-                //TODO: llamar nuestro microservicio
                 const chargeSucceeded = event.data.object;
-                console.log(event.data.object);
-                console.log(chargeSucceeded.metadata);
-                console.log(chargeSucceeded.metadata.orderId);
+                const payload = {
+                    stripePaymentId: chargeSucceeded.id,
+                    orderId: chargeSucceeded.metadata.orderId,
+                    receiptUrl: chargeSucceeded.receipt_url
+                }
+                this.client.emit('payment.succeeded', payload);
             break;
 
             default:
