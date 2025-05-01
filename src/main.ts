@@ -29,6 +29,8 @@ async function bootstrap() {
     inheritAppConfig: true
   });
 
+  console.log('Kubernetes-GCloud');
+
   await app.startAllMicroservices();
 
   await app.listen(envs.port);
