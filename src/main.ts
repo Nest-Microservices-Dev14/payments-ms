@@ -24,7 +24,12 @@ async function bootstrap() {
     options: {
       servers: envs.natsServers
     }
+  },
+  {
+    inheritAppConfig: true
   });
+
+  console.log('Kubernetes-GCloud');
 
   await app.startAllMicroservices();
 
